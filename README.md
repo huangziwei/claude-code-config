@@ -41,6 +41,7 @@ timestamp,session_id,project,model,cost_usd,reason
 ```bash
 python3 ~/.claude/claude-costs.py                          # monthly, all projects
 python3 ~/.claude/claude-costs.py --weekly                 # weekly, all projects
+python3 ~/.claude/claude-costs.py --daily                  # daily, all projects
 python3 ~/.claude/claude-costs.py --project myapp          # monthly, one project
 ```
 

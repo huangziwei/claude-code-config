@@ -21,25 +21,27 @@ def load_rows(project_filter: str | None = None) -> list[dict]:
     return rows
 
 
-def period_key(timestamp: str, weekly: bool) -> str:
+def period_key(timestamp: str, granularity: str) -> str:
     try:
         dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError:
         return "unknown"
-    if weekly:
+    if granularity == "daily":
+        return dt.strftime("%Y-%m-%d")
+    if granularity == "weekly":
         iso = dt.isocalendar()
         return f"{iso.year}-W{iso.week:02d}"
     return dt.strftime("%Y-%m")
 
 
-def summarize(rows: list[dict], weekly: bool) -> None:
+def summarize(rows: list[dict], granularity: str) -> None:
     # {period: {project: {"cost": float, "sessions": int}}}
     data: dict[str, dict[str, dict]] = defaultdict(
         lambda: defaultdict(lambda: {"cost": 0.0, "sessions": 0})
     )
 
     for row in rows:
-        period = period_key(row.get("timestamp", ""), weekly)
+        period = period_key(row.get("timestamp", ""), granularity)
         project = row.get("project", "unknown")
         cost = float(row.get("cost_usd", 0))
         data[period][project]["cost"] += cost
@@ -68,10 +70,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Summarize Claude Code session costs."
     )
-    parser.add_argument(
-        "--weekly", action="store_true",
-        help="Group by week instead of month.",
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--daily", action="store_const", const="daily", dest="granularity",
+        help="Group by day.",
     )
+    group.add_argument(
+        "--weekly", action="store_const", const="weekly", dest="granularity",
+        help="Group by week.",
+    )
+    parser.set_defaults(granularity="monthly")
     parser.add_argument(
         "--project", type=str, default=None,
         help="Filter to a specific project name.",
@@ -79,7 +87,7 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = load_rows(project_filter=args.project)
-    summarize(rows, weekly=args.weekly)
+    summarize(rows, granularity=args.granularity)
 
 
 if __name__ == "__main__":
