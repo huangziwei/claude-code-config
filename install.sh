@@ -23,6 +23,7 @@ printf "\033[1mInstalling Claude Code config...\033[0m\n\n"
 mkdir -p "$CLAUDE_DIR/hooks"
 cp "$CONFIG_DIR/statusline-command.py"        "$CLAUDE_DIR/statusline-command.py"
 cp "$CONFIG_DIR/hooks/session-cost-logger.py" "$CLAUDE_DIR/hooks/session-cost-logger.py"
+cp "$CONFIG_DIR/claude-costs.py"              "$CLAUDE_DIR/claude-costs.py"
 # Clean up old bash statusline if present.
 rm -f "$CLAUDE_DIR/statusline-command.sh"
 
@@ -73,5 +74,6 @@ MERGE
 printf "\n\033[32mDone!\033[0m Installed:\n"
 printf "  \033[90m%s\033[0m  %s\n" "statusline" "$CLAUDE_DIR/statusline-command.py"
 printf "  \033[90m%s\033[0m  %s\n" "cost logger" "$CLAUDE_DIR/hooks/session-cost-logger.py"
+printf "  \033[90m%s\033[0m  %s\n" "cost summary" "$CLAUDE_DIR/claude-costs.py"
 printf "  \033[90m%s\033[0m  %s\n" "settings" "$SETTINGS (merged)"
 printf "\nSession costs will be logged to \033[90m%s\033[0m\n" "$CLAUDE_DIR/session-costs.csv"
