@@ -34,7 +34,7 @@ def period_key(timestamp: str, granularity: str) -> str:
     return dt.strftime("%Y-%m")
 
 
-def summarize(rows: list[dict], granularity: str) -> None:
+def summarize(rows: list[dict], granularity: str, last: int | None = None) -> None:
     # {period: {project: {"cost": float, "sessions": int}}}
     data: dict[str, dict[str, dict]] = defaultdict(
         lambda: defaultdict(lambda: {"cost": 0.0, "sessions": 0})
@@ -51,11 +51,15 @@ def summarize(rows: list[dict], granularity: str) -> None:
         print("No session data found.")
         return
 
-    # Find the longest project name for alignment.
-    all_projects = {p for projects in data.values() for p in projects}
+    periods = sorted(data.keys(), reverse=True)
+    if last is not None:
+        periods = periods[:last]
+
+    # Find the longest project name for alignment (only within shown periods).
+    all_projects = {p for k in periods for p in data[k]}
     pad = max(len(p) for p in all_projects) if all_projects else 0
 
-    for period in sorted(data.keys(), reverse=True):
+    for period in periods:
         projects = data[period]
         total = sum(p["cost"] for p in projects.values())
         total_sessions = sum(p["sessions"] for p in projects.values())
@@ -81,13 +85,17 @@ def main() -> None:
     )
     parser.set_defaults(granularity="monthly")
     parser.add_argument(
+        "--last", type=int, default=None, metavar="N",
+        help="Show only the last N periods.",
+    )
+    parser.add_argument(
         "--project", type=str, default=None,
         help="Filter to a specific project name.",
     )
     args = parser.parse_args()
 
     rows = load_rows(project_filter=args.project)
-    summarize(rows, granularity=args.granularity)
+    summarize(rows, granularity=args.granularity, last=args.last)
 
 
 if __name__ == "__main__":
