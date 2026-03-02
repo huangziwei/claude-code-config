@@ -3,6 +3,8 @@
 
 import argparse
 import csv
+import io
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -16,6 +18,33 @@ def load_rows(project_filter: str | None = None) -> list[dict]:
         return []
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
+    if project_filter:
+        rows = [r for r in rows if r.get("project") == project_filter]
+    return rows
+
+
+def load_remote_rows(
+    host: str, project_filter: str | None = None
+) -> list[dict]:
+    """Read session-costs.csv from a remote host via SSH."""
+    remote_path = "~/.claude/session-costs.csv"
+    try:
+        result = subprocess.run(
+            ["ssh", host, "cat", remote_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"Warning: failed to read from {host}: {e}", file=sys.stderr)
+        return []
+    if result.returncode != 0:
+        print(
+            f"Warning: ssh {host} failed: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return []
+    rows = list(csv.DictReader(io.StringIO(result.stdout)))
     if project_filter:
         rows = [r for r in rows if r.get("project") == project_filter]
     return rows
@@ -92,9 +121,19 @@ def main() -> None:
         "--project", type=str, default=None,
         help="Filter to a specific project name.",
     )
+    parser.add_argument(
+        "--remote",
+        type=str,
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="SSH host to read remote costs from (can be repeated).",
+    )
     args = parser.parse_args()
 
     rows = load_rows(project_filter=args.project)
+    for host in args.remote:
+        rows.extend(load_remote_rows(host, project_filter=args.project))
     summarize(rows, granularity=args.granularity, last=args.last)
 
 
