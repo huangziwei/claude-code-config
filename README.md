@@ -15,7 +15,7 @@ git clone https://github.com/huangziwei/claude-code-config.git
 bash claude-code-config/install.sh
 ```
 
-The installer is idempotent — safe to run multiple times. It merges into your existing `~/.claude/settings.json` without overwriting other settings.
+The installer should be safe to run multiple times. It merges into your existing `~/.claude/settings.json` without overwriting other settings.
 
 ## What's included
 
