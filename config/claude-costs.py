@@ -107,12 +107,16 @@ def main() -> None:
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--daily", action="store_const", const="daily", dest="granularity",
+        "-d", "--daily", action="store_const", const="daily", dest="granularity",
         help="Group by day.",
     )
     group.add_argument(
-        "--weekly", action="store_const", const="weekly", dest="granularity",
+        "-w", "--weekly", action="store_const", const="weekly", dest="granularity",
         help="Group by week.",
+    )
+    group.add_argument(
+        "-m", "--monthly", action="store_const", const="monthly", dest="granularity",
+        help="Group by month (default).",
     )
     parser.set_defaults(granularity="monthly")
     parser.add_argument(
