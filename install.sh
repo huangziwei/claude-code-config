@@ -29,10 +29,16 @@ printf "\033[1m%s Claude Code config...\033[0m\n\n" "$ACTION"
 # --- Copy config files into ~/.claude/ ------------------------------------
 mkdir -p "$CLAUDE_DIR"
 cp "$CONFIG_DIR/statusline-command.py"        "$CLAUDE_DIR/statusline-command.py"
-cp "$CONFIG_DIR/claude-costs.py"              "$CLAUDE_DIR/claude-costs.py"
 # Clean up old files if present.
 rm -f "$CLAUDE_DIR/statusline-command.sh"
 rm -f "$CLAUDE_DIR/hooks/session-cost-logger.py"
+rm -f "$CLAUDE_DIR/claude-costs.py"
+
+# --- Install claude-costs TUI via uv tool ---------------------------------
+if command -v uv &>/dev/null; then
+  printf "Installing claude-costs tool...\n"
+  uv tool install --force "$REPO_DIR"
+fi
 
 # --- Merge into settings.json (non-destructive) ---------------------------
 python3 - "$SETTINGS" << 'MERGE'
@@ -77,6 +83,11 @@ MERGE
 # --- Summary ---------------------------------------------------------------
 printf "\n\033[32mDone!\033[0m\n"
 printf "  \033[90m%s\033[0m  %s\n" "statusline" "$CLAUDE_DIR/statusline-command.py"
-printf "  \033[90m%s\033[0m  %s\n" "cost summary" "$CLAUDE_DIR/claude-costs.py"
 printf "  \033[90m%s\033[0m  %s\n" "settings" "$SETTINGS (merged)"
+if command -v claude-costs &>/dev/null; then
+  printf "  \033[90m%s\033[0m  %s\n" "claude-costs" "installed (run 'claude-costs' for interactive TUI)"
+else
+  printf "\n  To install the cost tracker TUI:\n"
+  printf "    \033[90muv tool install git+https://github.com/huangziwei/claude-code-config.git\033[0m\n"
+fi
 printf "\nSession costs will be logged to \033[90m%s\033[0m\n" "$CLAUDE_DIR/session-costs.csv"
