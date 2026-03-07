@@ -7,7 +7,7 @@ import io
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 CSV_PATH = Path.home() / ".claude" / "session-costs.csv"
@@ -58,7 +58,9 @@ def period_key(timestamp: str, granularity: str) -> str:
     if granularity == "daily":
         return dt.strftime("%Y-%m-%d")
     if granularity == "weekly":
-        iso = dt.isocalendar()
+        # Weeks start on Sunday: shift forward 1 day so Sunday maps to Monday
+        shifted = dt + timedelta(days=1)
+        iso = shifted.isocalendar()
         return f"{iso.year}-W{iso.week:02d}"
     return dt.strftime("%Y-%m")
 
