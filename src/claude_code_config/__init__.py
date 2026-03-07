@@ -69,14 +69,18 @@ def period_key(timestamp: str, granularity: str) -> str:
 
 def aggregate(rows: list[dict], granularity: str) -> dict:
     data: dict[str, dict[str, dict]] = defaultdict(
-        lambda: defaultdict(lambda: {"cost": 0.0, "sessions": 0})
+        lambda: defaultdict(lambda: {"cost": 0.0, "sessions": 0, "in_tok": 0, "out_tok": 0})
     )
     for row in rows:
         period = period_key(row.get("timestamp", ""), granularity)
         project = row.get("project", "unknown")
         cost = float(row.get("cost_usd", 0))
+        in_tok = int(row.get("input_tokens", 0) or 0)
+        out_tok = int(row.get("output_tokens", 0) or 0)
         data[period][project]["cost"] += cost
         data[period][project]["sessions"] += 1
+        data[period][project]["in_tok"] += in_tok
+        data[period][project]["out_tok"] += out_tok
     return data
 
 
@@ -90,6 +94,14 @@ def _cost_style(cost: float) -> str:
 
 def _sess(n: int) -> str:
     return f"{n} session{'s' if n != 1 else ''}"
+
+
+def _tok(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
 
 
 class CostsApp(App):
@@ -118,6 +130,7 @@ class CostsApp(App):
         Binding("m", "set_granularity('monthly')", "Monthly"),
         Binding("w", "set_granularity('weekly')", "Weekly"),
         Binding("d", "set_granularity('daily')", "Daily"),
+        Binding("t", "toggle_tokens", "Tokens"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
     ]
@@ -132,6 +145,7 @@ class CostsApp(App):
         super().__init__()
         self.rows = rows
         self.granularity = initial_granularity
+        self.show_tokens = False
         self._project_filter = project_filter
         self._remote_hosts = remote_hosts or []
 
@@ -149,6 +163,10 @@ class CostsApp(App):
         if self.granularity != g:
             self.granularity = g
             self._rebuild()
+
+    def action_toggle_tokens(self) -> None:
+        self.show_tokens = not self.show_tokens
+        self._rebuild()
 
     def action_reload(self) -> None:
         self.rows = load_rows(project_filter=self._project_filter)
@@ -186,52 +204,72 @@ class CostsApp(App):
 
         periods = sorted(data.keys(), reverse=True)
 
-        max_cost = (
-            max(
-                p["cost"]
-                for projects in data.values()
-                for p in projects.values()
-            )
-            or 1
-        )
+        show_tok = self.show_tokens
+
+        # Value to display and scale bars by
+        def _val(p: dict) -> float:
+            if show_tok:
+                return p["in_tok"] + p["out_tok"]
+            return p["cost"]
+
+        max_val = max(
+            (_val(p) for projects in data.values() for p in projects.values()),
+            default=1,
+        ) or 1
 
         all_projects = {p for projects in data.values() for p in projects}
         pad = max(len(p) for p in all_projects) if all_projects else 12
 
         grand_total = 0.0
         grand_sessions = 0
+        grand_in = 0
+        grand_out = 0
 
         for period in periods:
             projects = data[period]
             total = sum(p["cost"] for p in projects.values())
             total_sessions = sum(p["sessions"] for p in projects.values())
+            total_in = sum(p["in_tok"] for p in projects.values())
+            total_out = sum(p["out_tok"] for p in projects.values())
             grand_total += total
             grand_sessions += total_sessions
+            grand_in += total_in
+            grand_out += total_out
 
             label = Text()
             label.append(f"{period}", style="bold")
-            label.append(f"  ${total:>8.2f}", style=_cost_style(total))
+            if show_tok:
+                label.append(f"  {_tok(total_in)} in / {_tok(total_out)} out", style="blue")
+            else:
+                label.append(f"  ${total:>8.2f}", style=_cost_style(total))
             label.append(f"  ({_sess(total_sessions)})", style="dim")
 
             node = tree.root.add(label, expand=True)
 
             for proj_name in sorted(
-                projects, key=lambda p: -projects[p]["cost"]
+                projects, key=lambda p: -_val(projects[p])
             ):
                 p = projects[proj_name]
-                bar_len = int(20 * p["cost"] / max_cost)
+                bar_len = int(20 * _val(p) / max_val)
                 bar = "\u2588" * bar_len
 
                 sess_str = f"({_sess(p['sessions'])})"
-                # bar_col = project + cost + session text, padded to fixed width
-                text_len = pad + 12 + len(sess_str)  # "name  $XXXX.XX  (N sessions)"
-                bar_col = pad + 28
+                if show_tok:
+                    val_str = f"  {_tok(p['in_tok']):>6} in / {_tok(p['out_tok']):>6} out"
+                else:
+                    val_str = f"  ${p['cost']:>8.2f}"
+                text_len = pad + len(val_str) + 2 + len(sess_str)
+                bar_col = pad + 40
+                gap = max(2, bar_col - text_len)
 
                 plabel = Text()
                 plabel.append(f"{proj_name:<{pad}}", style="cyan")
-                plabel.append(f"  ${p['cost']:>8.2f}", style=_cost_style(p["cost"]))
+                if show_tok:
+                    plabel.append(val_str, style="blue")
+                else:
+                    plabel.append(val_str, style=_cost_style(p["cost"]))
                 plabel.append(f"  {sess_str}", style="dim")
-                plabel.append(" " * (bar_col - text_len))
+                plabel.append(" " * gap)
                 if bar:
                     plabel.append(bar, style="magenta")
 
@@ -239,7 +277,10 @@ class CostsApp(App):
 
         total_text = Text()
         total_text.append("Total: ", style="bold")
-        total_text.append(f"${grand_total:.2f}", style="bold green")
+        if show_tok:
+            total_text.append(f"{_tok(grand_in)} in / {_tok(grand_out)} out", style="bold blue")
+        else:
+            total_text.append(f"${grand_total:.2f}", style="bold green")
         total_text.append(f"  ({_sess(grand_sessions)})", style="dim")
         self.query_one("#total-bar", Static).update(total_text)
 
