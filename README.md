@@ -5,19 +5,17 @@ Interactive TUI for tracking Claude Code session costs and token usage.
 ## Install
 
 ```bash
-uv tool install git+https://github.com/huangziwei/claude-costs.git
+curl -fsSL https://raw.githubusercontent.com/huangziwei/claude-costs/main/install.sh | bash
 ```
 
-This installs the `claude-costs` command and sets up the status line that logs session data.
-
-Or clone and run the full installer (also configures the status line and settings.json):
+Or clone and run locally:
 
 ```bash
 git clone https://github.com/huangziwei/claude-costs.git
 bash claude-costs/install.sh
 ```
 
-The installer is safe to run multiple times. It merges into your existing `~/.claude/settings.json` without overwriting other settings.
+The installer copies the status line script, merges settings into `~/.claude/settings.json`, and installs the `claude-costs` TUI via `uv tool install`. It is safe to run multiple times.
 
 ## Usage
 
