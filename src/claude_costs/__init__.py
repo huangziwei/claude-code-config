@@ -26,6 +26,7 @@ def load_rows(project_filter: str | None = None) -> list[dict]:
         rows = list(csv.DictReader(f))
     if project_filter:
         rows = [r for r in rows if r.get("project") == project_filter]
+    rows = [r for r in rows if float(r.get("cost_usd", 0)) > 0]
     return rows
 
 
@@ -220,13 +221,13 @@ class CostsApp(App):
                 return p["in_tok"] + p["out_tok"]
             return p["cost"]
 
-        max_val = (
-            max(
-                (_val(p) for projects in data.values() for p in projects.values()),
-                default=1,
-            )
-            or 1
-        )
+        # Fixed scale for bars: 1 block = $1 (cost) or 50k tokens.
+        # Capped at 50 blocks max to avoid overflow.
+        max_bar = 300
+        if show_tok:
+            bar_unit = 50_000  # tokens per block
+        else:
+            bar_unit = 1.0  # dollars per block
 
         all_projects = {p for projects in data.values() for p in projects}
         pad = max(len(p) for p in all_projects) if all_projects else 12
@@ -278,7 +279,7 @@ class CostsApp(App):
                 p = projects[proj_name]
                 sess_str = f"({_sess(p['sessions'])})"
                 dur_str = _duration(p["duration_ms"]) if p["duration_ms"] else ""
-                bar_len = int(20 * _val(p) / max_val)
+                bar_len = min(max_bar, int(_val(p) / bar_unit))
                 bar = "\u2588" * bar_len
 
                 if show_tok:
