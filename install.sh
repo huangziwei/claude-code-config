@@ -26,6 +26,21 @@ fi
 
 printf "\033[1m%s Claude Code config...\033[0m\n\n" "$ACTION"
 
+# --- Find a working python3 -----------------------------------------------
+# macOS system python3 (/usr/bin/python3) is a shim that requires Xcode CLT.
+# Prefer Homebrew or other standalone installs that always work.
+PYTHON3=""
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+  if command -v "$candidate" &>/dev/null && "$candidate" -c "pass" 2>/dev/null; then
+    PYTHON3="$(command -v "$candidate")"
+    break
+  fi
+done
+if [ -z "$PYTHON3" ]; then
+  printf "\033[31mError: no working python3 found.\033[0m\n" >&2
+  exit 1
+fi
+
 # --- Copy config files into ~/.claude/ ------------------------------------
 mkdir -p "$CLAUDE_DIR"
 cp "$CONFIG_DIR/statusline-command.py"        "$CLAUDE_DIR/statusline-command.py"
@@ -41,13 +56,14 @@ if command -v uv &>/dev/null; then
 fi
 
 # --- Merge into settings.json (non-destructive) ---------------------------
-python3 - "$SETTINGS" << 'MERGE'
+"$PYTHON3" - "$SETTINGS" "$PYTHON3" << 'MERGE'
 import json, sys, os
 
 settings_path = sys.argv[1]
+python3_path = sys.argv[2]
 
 # Our config to merge in.
-statusline_cmd = "python3 " + os.path.expanduser("~/.claude/statusline-command.py")
+statusline_cmd = python3_path + " " + os.path.expanduser("~/.claude/statusline-command.py")
 our_statusline = {"type": "command", "command": statusline_cmd}
 
 # Load existing settings.
