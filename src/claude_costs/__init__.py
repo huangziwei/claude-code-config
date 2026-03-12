@@ -6,6 +6,7 @@ __version__ = _pkg_version("claude-costs")
 
 import argparse
 import csv
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -71,6 +72,20 @@ def aggregate(rows: list[dict], granularity: str) -> dict:
         data[period][project]["duration_ms"] += dur_ms
         data[period][project]["rows"].append(row)
     return data
+
+
+def _display_width(s: str) -> int:
+    """Return the number of terminal columns a string occupies."""
+    w = 0
+    for ch in s:
+        eaw = unicodedata.east_asian_width(ch)
+        w += 2 if eaw in ("W", "F") else 1
+    return w
+
+
+def _ljust(s: str, width: int) -> str:
+    """Left-justify *s* to *width* terminal columns."""
+    return s + " " * (width - _display_width(s))
 
 
 def _cost_style(cost: float) -> str:
@@ -230,7 +245,7 @@ class CostsApp(App):
             bar_unit = 1.0  # dollars per block
 
         all_projects = {p for projects in data.values() for p in projects}
-        pad = max(len(p) for p in all_projects) if all_projects else 12
+        pad = max(_display_width(p) for p in all_projects) if all_projects else 12
 
         # Compute global max widths for sessions and duration columns
         max_sess_width = 0
@@ -291,7 +306,8 @@ class CostsApp(App):
 
                 # Build entire prefix as one plain string to guarantee
                 # fixed width, then apply styles by character position.
-                prefix = f"{proj_name:<{pad}}"
+                name_padded = _ljust(proj_name, pad)
+                prefix = name_padded
                 prefix += val_str
                 prefix += f"  {sess_str:>{max_sess_width}}"
                 if max_dur_width:
@@ -299,10 +315,11 @@ class CostsApp(App):
                 prefix += "  "
 
                 plabel = Text(prefix)
-                # Apply styles by character ranges
+                # Apply styles by character ranges (indices are character-based)
                 c = 0
-                plabel.stylize("cyan", c, c + pad)
-                c += pad
+                name_len = len(name_padded)
+                plabel.stylize("cyan", c, c + name_len)
+                c += name_len
                 val_style = "blue" if show_tok else _cost_style(p["cost"])
                 plabel.stylize(val_style, c, c + len(val_str))
                 c += len(val_str)
