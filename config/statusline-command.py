@@ -97,11 +97,13 @@ def _upsert_csv(session_id: str, project: str, model: str,
             pass
 
 
-def _sum_transcript_usage(transcript_path: str) -> tuple[int, int]:
-    """Sum cumulative billed tokens from a session transcript.
+def _sum_transcript_tokens(transcript_path: str) -> tuple[int, int]:
+    """Sum cumulative billed tokens from the main session transcript.
 
     Reads the JSONL transcript, deduplicates by message ID (keeping the
-    last entry), and sums all token types.
+    last entry), and sums all token types.  Subagent transcripts (context
+    compression, etc.) are excluded because their costs are not included
+    in the session's total_cost_usd.
 
     Returns (total_input_tokens, total_output_tokens) where input includes
     non-cached, cache-creation, and cache-read tokens.
@@ -114,7 +116,10 @@ def _sum_transcript_usage(transcript_path: str) -> tuple[int, int]:
             for line in f:
                 if '"usage"' not in line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
                 if not isinstance(data, dict):
                     continue
                 msg = data.get("message")
@@ -149,9 +154,9 @@ def main() -> None:
     session_id = data.get("session_id", "unknown")
     transcript_path = data.get("transcript_path", "")
 
-    # Sum actual billed tokens from transcript (includes cache tokens).
+    # Sum actual billed tokens from transcripts (main + subagents).
     # Falls back to context_window values if transcript is unavailable.
-    input_tokens, output_tokens = _sum_transcript_usage(transcript_path)
+    input_tokens, output_tokens = _sum_transcript_tokens(transcript_path)
     if not input_tokens and not output_tokens:
         input_tokens = ctx.get("total_input_tokens", 0)
         output_tokens = ctx.get("total_output_tokens", 0)

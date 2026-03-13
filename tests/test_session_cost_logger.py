@@ -295,7 +295,7 @@ class TestUpsertCsv:
 # _sum_transcript_usage
 # ---------------------------------------------------------------------------
 
-class TestSumTranscriptUsage:
+class TestSumTranscriptTokens:
     def _load_mod(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -309,7 +309,6 @@ class TestSumTranscriptUsage:
         mod = self._load_mod()
         import json
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            # Two different messages
             f.write(json.dumps({"type": "assistant", "message": {
                 "id": "msg_1", "usage": {
                     "input_tokens": 10, "cache_creation_input_tokens": 100,
@@ -322,7 +321,7 @@ class TestSumTranscriptUsage:
                 }}}) + "\n")
             path = f.name
         try:
-            in_tok, out_tok = mod._sum_transcript_usage(path)
+            in_tok, out_tok = mod._sum_transcript_tokens(path)
             assert in_tok == 10 + 100 + 1000 + 20 + 200 + 2000  # 3330
             assert out_tok == 50 + 80  # 130
         finally:
@@ -332,7 +331,6 @@ class TestSumTranscriptUsage:
         mod = self._load_mod()
         import json
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            # Same message ID, different output tokens (streaming updates)
             f.write(json.dumps({"type": "assistant", "message": {
                 "id": "msg_1", "usage": {
                     "input_tokens": 10, "cache_creation_input_tokens": 100,
@@ -345,16 +343,40 @@ class TestSumTranscriptUsage:
                 }}}) + "\n")
             path = f.name
         try:
-            in_tok, out_tok = mod._sum_transcript_usage(path)
-            # Should count msg_1 only once (last entry)
+            in_tok, out_tok = mod._sum_transcript_tokens(path)
             assert in_tok == 10 + 100 + 1000  # 1110
             assert out_tok == 420
         finally:
             os.unlink(path)
 
+    def test_excludes_subagent_transcripts(self):
+        mod = self._load_mod()
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            # Main transcript
+            main_path = os.path.join(tmp, "session.jsonl")
+            with open(main_path, "w") as f:
+                f.write(json.dumps({"type": "assistant", "message": {
+                    "id": "msg_1", "usage": {
+                        "input_tokens": 10, "cache_read_input_tokens": 1000,
+                        "output_tokens": 50,
+                    }}}) + "\n")
+            # Subagent transcript (should NOT be counted)
+            sub_dir = os.path.join(tmp, "session", "subagents")
+            os.makedirs(sub_dir)
+            with open(os.path.join(sub_dir, "agent-compact.jsonl"), "w") as f:
+                f.write(json.dumps({"type": "assistant", "message": {
+                    "id": "msg_sub1", "usage": {
+                        "input_tokens": 5, "cache_read_input_tokens": 500,
+                        "output_tokens": 30,
+                    }}}) + "\n")
+            in_tok, out_tok = mod._sum_transcript_tokens(main_path)
+            assert in_tok == 10 + 1000  # 1010, subagent excluded
+            assert out_tok == 50  # subagent excluded
+
     def test_missing_file(self):
         mod = self._load_mod()
-        assert mod._sum_transcript_usage("/nonexistent/path.jsonl") == (0, 0)
+        assert mod._sum_transcript_tokens("/nonexistent/path.jsonl") == (0, 0)
 
     def test_skips_non_usage_lines(self):
         mod = self._load_mod()
@@ -367,7 +389,7 @@ class TestSumTranscriptUsage:
                 }}}) + "\n")
             path = f.name
         try:
-            in_tok, out_tok = mod._sum_transcript_usage(path)
+            in_tok, out_tok = mod._sum_transcript_tokens(path)
             assert in_tok == 5
             assert out_tok == 10
         finally:
