@@ -289,3 +289,86 @@ class TestUpsertCsv:
                 assert rows[1]["session_id"] == "sess2"
             finally:
                 mod.CSV_PATH = original
+
+
+# ---------------------------------------------------------------------------
+# _sum_transcript_usage
+# ---------------------------------------------------------------------------
+
+class TestSumTranscriptUsage:
+    def _load_mod(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "statusline", os.path.join(os.path.dirname(__file__), "..", "config", "statusline-command.py")
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_sums_all_token_types(self):
+        mod = self._load_mod()
+        import json
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # Two different messages
+            f.write(json.dumps({"type": "assistant", "message": {
+                "id": "msg_1", "usage": {
+                    "input_tokens": 10, "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 1000, "output_tokens": 50,
+                }}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {
+                "id": "msg_2", "usage": {
+                    "input_tokens": 20, "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 2000, "output_tokens": 80,
+                }}}) + "\n")
+            path = f.name
+        try:
+            in_tok, out_tok = mod._sum_transcript_usage(path)
+            assert in_tok == 10 + 100 + 1000 + 20 + 200 + 2000  # 3330
+            assert out_tok == 50 + 80  # 130
+        finally:
+            os.unlink(path)
+
+    def test_deduplicates_by_message_id(self):
+        mod = self._load_mod()
+        import json
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # Same message ID, different output tokens (streaming updates)
+            f.write(json.dumps({"type": "assistant", "message": {
+                "id": "msg_1", "usage": {
+                    "input_tokens": 10, "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 1000, "output_tokens": 5,
+                }}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {
+                "id": "msg_1", "usage": {
+                    "input_tokens": 10, "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 1000, "output_tokens": 420,
+                }}}) + "\n")
+            path = f.name
+        try:
+            in_tok, out_tok = mod._sum_transcript_usage(path)
+            # Should count msg_1 only once (last entry)
+            assert in_tok == 10 + 100 + 1000  # 1110
+            assert out_tok == 420
+        finally:
+            os.unlink(path)
+
+    def test_missing_file(self):
+        mod = self._load_mod()
+        assert mod._sum_transcript_usage("/nonexistent/path.jsonl") == (0, 0)
+
+    def test_skips_non_usage_lines(self):
+        mod = self._load_mod()
+        import json
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({"type": "file-history-snapshot", "snapshot": {}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {
+                "id": "msg_1", "usage": {
+                    "input_tokens": 5, "output_tokens": 10,
+                }}}) + "\n")
+            path = f.name
+        try:
+            in_tok, out_tok = mod._sum_transcript_usage(path)
+            assert in_tok == 5
+            assert out_tok == 10
+        finally:
+            os.unlink(path)

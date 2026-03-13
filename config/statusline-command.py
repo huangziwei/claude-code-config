@@ -97,6 +97,42 @@ def _upsert_csv(session_id: str, project: str, model: str,
             pass
 
 
+def _sum_transcript_usage(transcript_path: str) -> tuple[int, int]:
+    """Sum cumulative billed tokens from a session transcript.
+
+    Reads the JSONL transcript, deduplicates by message ID (keeping the
+    last entry), and sums all token types.
+
+    Returns (total_input_tokens, total_output_tokens) where input includes
+    non-cached, cache-creation, and cache-read tokens.
+    """
+    if not transcript_path or not Path(transcript_path).exists():
+        return 0, 0
+    try:
+        by_msg: dict[str, dict] = {}
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if '"usage"' not in line:
+                    continue
+                data = json.loads(line)
+                if not isinstance(data, dict):
+                    continue
+                msg = data.get("message")
+                if isinstance(msg, dict) and msg.get("usage"):
+                    by_msg[msg.get("id", "")] = msg["usage"]
+
+        total_in = 0
+        total_out = 0
+        for usage in by_msg.values():
+            total_in += usage.get("input_tokens", 0)
+            total_in += usage.get("cache_creation_input_tokens", 0)
+            total_in += usage.get("cache_read_input_tokens", 0)
+            total_out += usage.get("output_tokens", 0)
+        return total_in, total_out
+    except Exception:
+        return 0, 0
+
+
 def main() -> None:
     try:
         data = json.loads(sys.stdin.read())
@@ -107,12 +143,18 @@ def main() -> None:
     model_id = data.get("model", {}).get("id", "unknown")
     ctx = data.get("context_window", {})
     ctx_remaining = ctx.get("remaining_percentage", "?")
-    input_tokens = ctx.get("total_input_tokens", 0)
-    output_tokens = ctx.get("total_output_tokens", 0)
     cost_usd = data.get("cost", {}).get("total_cost_usd", 0)
     duration_api_ms = data.get("cost", {}).get("total_api_duration_ms", 0)
     cwd = data.get("cwd", "")
     session_id = data.get("session_id", "unknown")
+    transcript_path = data.get("transcript_path", "")
+
+    # Sum actual billed tokens from transcript (includes cache tokens).
+    # Falls back to context_window values if transcript is unavailable.
+    input_tokens, output_tokens = _sum_transcript_usage(transcript_path)
+    if not input_tokens and not output_tokens:
+        input_tokens = ctx.get("total_input_tokens", 0)
+        output_tokens = ctx.get("total_output_tokens", 0)
 
     # Shorten home dir to ~.
     home = os.path.expanduser("~")
