@@ -28,7 +28,66 @@ def load_rows(project_filter: str | None = None) -> list[dict]:
     if project_filter:
         rows = [r for r in rows if r.get("project") == project_filter]
     rows = [r for r in rows if float(r.get("cost_usd", 0)) > 0]
+    _dedupe_resumed_sessions(rows)
     return rows
+
+
+def _dedupe_resumed_sessions(rows: list[dict]) -> None:
+    """Fix double-counted costs from resumed Claude Code sessions.
+
+    When /resume is used, Claude Code creates a new session_id but reports
+    cumulative cost_usd and duration_api_ms that include the parent session.
+    This causes the same cost to be counted multiple times.
+
+    Detection: if session B's "implied start" (timestamp - duration) is
+    before session A's last-seen timestamp, B's duration is impossibly large
+    for an independent session — it must have inherited A's values.
+
+    Fix: convert the later session's cost/duration to deltas and mark it
+    as a continuation so it isn't counted as a separate session.
+    """
+    by_project: dict[str, list[int]] = defaultdict(list)
+    for i, row in enumerate(rows):
+        by_project[row.get("project", "unknown")].append(i)
+
+    for indices in by_project.values():
+        indices.sort(key=lambda i: rows[i].get("timestamp", ""))
+
+        # Walk right-to-left so each predecessor is still unmodified when
+        # we compare against it.
+        for j in range(len(indices) - 1, 0, -1):
+            curr = rows[indices[j]]
+            prev = rows[indices[j - 1]]
+
+            curr_dur = int(curr.get("duration_api_ms", 0) or 0)
+            prev_dur = int(prev.get("duration_api_ms", 0) or 0)
+            curr_cost = float(curr.get("cost_usd", 0))
+            prev_cost = float(prev.get("cost_usd", 0))
+
+            if prev_dur <= 0 or prev_cost <= 0:
+                continue
+            if curr_dur < prev_dur or curr_cost < prev_cost:
+                continue
+
+            # Key check: curr's implied start (timestamp - api_duration)
+            # must be before prev's timestamp.  If so, curr could not have
+            # accumulated that much API time independently.
+            try:
+                curr_ts = datetime.fromisoformat(
+                    curr.get("timestamp", "").replace("Z", "+00:00"))
+                prev_ts = datetime.fromisoformat(
+                    prev.get("timestamp", "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            implied_start = curr_ts - timedelta(milliseconds=curr_dur)
+            if implied_start >= prev_ts:
+                continue
+
+            # Confirmed resume — convert cumulative values to deltas.
+            curr["cost_usd"] = f"{curr_cost - prev_cost:.4f}"
+            curr["duration_api_ms"] = str(curr_dur - prev_dur)
+            curr["_resumed"] = "1"
 
 
 def period_key(timestamp: str, granularity: str) -> str:
@@ -66,7 +125,8 @@ def aggregate(rows: list[dict], granularity: str) -> dict:
         out_tok = int(row.get("output_tokens", 0) or 0)
         dur_ms = int(row.get("duration_api_ms", 0) or 0)
         data[period][project]["cost"] += cost
-        data[period][project]["sessions"] += 1
+        if not row.get("_resumed"):
+            data[period][project]["sessions"] += 1
         data[period][project]["in_tok"] += in_tok
         data[period][project]["out_tok"] += out_tok
         data[period][project]["duration_ms"] += dur_ms

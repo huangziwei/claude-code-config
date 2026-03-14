@@ -5,7 +5,9 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from claude_costs import aggregate, load_rows, period_key, _cost_style, _sess, _tok, _duration
+import pytest
+
+from claude_costs import aggregate, load_rows, period_key, _cost_style, _sess, _tok, _duration, _dedupe_resumed_sessions
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +207,109 @@ class TestAggregate:
 
     def test_empty_input(self):
         assert aggregate([], "monthly") == {}
+
+
+# ---------------------------------------------------------------------------
+# _dedupe_resumed_sessions
+# ---------------------------------------------------------------------------
+
+class TestDedupeResumedSessions:
+    """Test detection and deduplication of resumed sessions."""
+
+    def test_triple_resume_chain(self):
+        """Three segments of the same resumed session — the user's reported bug."""
+        rows = [
+            {"timestamp": "2026-03-14T16:58:51Z", "session_id": "aaa", "project": "proj",
+             "cost_usd": "136.4431", "input_tokens": "215054917", "output_tokens": "544713",
+             "duration_api_ms": "18982751"},
+            {"timestamp": "2026-03-14T17:02:11Z", "session_id": "bbb", "project": "proj",
+             "cost_usd": "136.9069", "input_tokens": "430007", "output_tokens": "3994",
+             "duration_api_ms": "19074376"},
+            {"timestamp": "2026-03-14T20:30:59Z", "session_id": "ccc", "project": "proj",
+             "cost_usd": "213.1712", "input_tokens": "128223424", "output_tokens": "113933",
+             "duration_api_ms": "28110451"},
+        ]
+        _dedupe_resumed_sessions(rows)
+        # First segment keeps original values
+        assert float(rows[0]["cost_usd"]) == pytest.approx(136.4431)
+        assert rows[0].get("_resumed") is None
+        # Second segment: delta
+        assert float(rows[1]["cost_usd"]) == pytest.approx(136.9069 - 136.4431)
+        assert rows[1]["_resumed"] == "1"
+        # Third segment: delta from second
+        assert float(rows[2]["cost_usd"]) == pytest.approx(213.1712 - 136.9069)
+        assert rows[2]["_resumed"] == "1"
+        # Tokens are NOT modified (they're per-segment from transcripts)
+        assert rows[0]["input_tokens"] == "215054917"
+        assert rows[1]["input_tokens"] == "430007"
+        assert rows[2]["input_tokens"] == "128223424"
+        # Total cost sums to the cumulative value
+        total = sum(float(r["cost_usd"]) for r in rows)
+        assert total == pytest.approx(213.1712)
+
+    def test_independent_sessions_not_merged(self):
+        """Two independent sessions on the same project should not be deduped."""
+        rows = [
+            {"timestamp": "2026-03-14T10:00:00Z", "session_id": "aaa", "project": "proj",
+             "cost_usd": "50.00", "input_tokens": "1000", "output_tokens": "500",
+             "duration_api_ms": "3600000"},   # 1h
+            {"timestamp": "2026-03-14T19:00:00Z", "session_id": "bbb", "project": "proj",
+             "cost_usd": "80.00", "input_tokens": "2000", "output_tokens": "800",
+             "duration_api_ms": "7200000"},   # 2h, started ~17:00, after aaa
+        ]
+        _dedupe_resumed_sessions(rows)
+        # Neither should be marked as resumed
+        assert rows[0].get("_resumed") is None
+        assert rows[1].get("_resumed") is None
+        assert float(rows[0]["cost_usd"]) == pytest.approx(50.0)
+        assert float(rows[1]["cost_usd"]) == pytest.approx(80.0)
+
+    def test_different_projects_not_merged(self):
+        """Sessions on different projects are never merged."""
+        rows = [
+            {"timestamp": "2026-03-14T10:00:00Z", "session_id": "aaa", "project": "projA",
+             "cost_usd": "100.00", "input_tokens": "1000", "output_tokens": "500",
+             "duration_api_ms": "18000000"},   # 5h
+            {"timestamp": "2026-03-14T10:05:00Z", "session_id": "bbb", "project": "projB",
+             "cost_usd": "200.00", "input_tokens": "2000", "output_tokens": "800",
+             "duration_api_ms": "18300000"},   # 5h05m
+        ]
+        _dedupe_resumed_sessions(rows)
+        assert rows[0].get("_resumed") is None
+        assert rows[1].get("_resumed") is None
+
+    def test_no_duration_skipped(self):
+        """Sessions without duration data are never merged."""
+        rows = [
+            {"timestamp": "2026-03-14T10:00:00Z", "session_id": "aaa", "project": "proj",
+             "cost_usd": "10.00", "input_tokens": "1000", "output_tokens": "500",
+             "duration_api_ms": "0"},
+            {"timestamp": "2026-03-14T10:05:00Z", "session_id": "bbb", "project": "proj",
+             "cost_usd": "20.00", "input_tokens": "2000", "output_tokens": "800",
+             "duration_api_ms": "36000000"},
+        ]
+        _dedupe_resumed_sessions(rows)
+        assert rows[0].get("_resumed") is None
+        assert rows[1].get("_resumed") is None
+
+    def test_aggregate_session_count(self):
+        """Resumed sessions should count as 1 session in aggregate."""
+        rows = [
+            {"timestamp": "2026-03-14T16:58:51Z", "session_id": "aaa", "project": "proj",
+             "cost_usd": "100.00", "input_tokens": "1000", "output_tokens": "500",
+             "duration_api_ms": "18000000"},
+            {"timestamp": "2026-03-14T17:02:00Z", "session_id": "bbb", "project": "proj",
+             "cost_usd": "105.00", "input_tokens": "200", "output_tokens": "100",
+             "duration_api_ms": "18300000"},
+        ]
+        _dedupe_resumed_sessions(rows)
+        data = aggregate(rows, "daily")
+        proj = data["2026-03-14"]["proj"]
+        assert proj["sessions"] == 1
+        assert proj["cost"] == pytest.approx(105.0)
+        # Tokens are summed (per-segment)
+        assert proj["in_tok"] == 1200
+        assert proj["out_tok"] == 600
 
 
 # ---------------------------------------------------------------------------
